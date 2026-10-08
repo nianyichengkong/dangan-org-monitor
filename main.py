@@ -1,11 +1,7 @@
 """档案机构监测工作台 — Windows 桌面应用入口（PySide6）。
 
-界面结构（与确认的 HTML 原型 v2 一致）：
-    顶栏：标题 + 导出 Excel + 刷新数据
-    筛选：省份 / 层级 / 状态 + 关键词搜索
-    表格：官网 7 字段 + 更新状态 + 更新日期
-    弹窗：点击「已变更」标签展示 旧值 → 新值（点空白处关闭）
-    状态栏：上次刷新时间 | 数据源 | 定时开关 | 刷新进度
+界面样式遵循《设计规范.md》：所有视觉常量集中在 Token 类 T，
+规范文档中的每个令牌与本文件一一对应，改样式先改规范再改令牌。
 """
 
 from __future__ import annotations
@@ -14,12 +10,13 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtCore import QSize, QThread, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
-    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox,
-    QPushButton, QStatusBar, QTableWidget, QTableWidgetItem, QVBoxLayout,
+    QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog,
+    QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QHeaderView, QLabel,
+    QLineEdit, QMainWindow, QMessageBox, QPushButton, QStatusBar,
+    QStyledItemDelegate, QStyle, QTableWidget, QTableWidgetItem, QVBoxLayout,
     QWidget,
 )
 
@@ -29,21 +26,56 @@ from scraper import fetch_all
 
 COLS = ["序号", "行政区划代码", "机构编号", "机构全称", "机构层级",
         "通讯地址", "联系电话", "更新状态", "更新日期"]
-COL_STATUS = 7  # 更新状态列索引
-
-C_ACCENT = "#1677ff"
-C_GREEN_BG, C_GREEN_BD, C_GREEN_TX = "#f6ffed", "#b7eb8f", "#389e0d"
-C_AMBER_BG, C_AMBER_BD, C_AMBER_TX = "#fffbe6", "#ffe58f", "#d48806"
-C_GREY_TX = "#8c8c8c"
+COL_STATUS = 7
 
 
-# ---------------------------------------------------------------- 刷新线程
+# ================================================================ 设计令牌
+# 与《设计规范.md》一一对应
+
+class T:
+    """Design Tokens — 修改样式先改《设计规范.md》再同步此处。"""
+
+    # 品牌色
+    PRIMARY = "#1677FF"
+    PRIMARY_HOVER = "#4096FF"
+    PRIMARY_ACTIVE = "#0958D9"
+    PRIMARY_BG = "#E8F3FF"
+    # 中性色
+    BG_PAGE = "#F5F6F8"
+    BG_SURFACE = "#FFFFFF"
+    BG_HOVER = "#F5F6F8"
+    BORDER = "#E5E7EB"
+    DIVIDER = "#F0F1F3"
+    TEXT_1 = "#1F2329"
+    TEXT_2 = "#646A73"
+    TEXT_3 = "#8F959E"
+    TEXT_DISABLED = "#BFC4CC"
+    # 语义色：新增 / 已变更 / 无变化
+    NEW_BG, NEW_BD, NEW_TX = "#F6FFED", "#B7EB8F", "#389E0D"
+    UPD_BG, UPD_BD, UPD_TX = "#FFFBE6", "#FCE57F", "#D48806"
+    OK_BG, OK_TX = "#F5F5F5", "#8F959E"
+    # 字体
+    FONT_FAMILY = "'Microsoft YaHei UI', 'PingFang SC', 'Segoe UI', sans-serif"
+    # 圆角
+    RADIUS_LG = 10
+    RADIUS_MD = 6
+    # 尺寸
+    CONTROL_H = 32
+    ROW_H = 38
+    PAGE_MARGIN = 24
+    BLOCK_GAP = 12
+
+
+ST_TAG = {"new": "新增", "upd": "已变更", "ok": "—"}
+
+
+# ================================================================ 刷新线程
 
 class RefreshWorker(QThread):
     """后台抓取线程：网络请求不阻塞界面。"""
 
     progress = Signal(str)
-    done = Signal(dict)   # {"fresh": [...], "stats": {...}}
+    done = Signal(dict)
     failed = Signal(str)
 
     def __init__(self, db: Database) -> None:
@@ -59,10 +91,83 @@ class RefreshWorker(QThread):
             self.failed.emit(str(exc))
 
 
-# ---------------------------------------------------------------- 变更弹窗
+# ================================================================ 状态徽章
+
+class BadgeDelegate(QStyledItemDelegate):
+    """状态列徽章：胶囊形绘制，替代生硬的整格填色。"""
+
+    _STYLES = {
+        "新增": (T.NEW_BG, T.NEW_BD, T.NEW_TX),
+        "已变更": (T.UPD_BG, T.UPD_BD, T.UPD_TX),
+        "—": (T.OK_BG, None, T.OK_TX),
+    }
+
+    def paint(self, painter: QPainter, option, index) -> None:
+        text = index.data(Qt.DisplayRole) or "—"
+        bg, bd, tx = self._STYLES.get(text, self._STYLES["—"])
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        font = painter.font()
+        font.setPixelSize(12)
+        painter.setFont(font)
+
+        fm = painter.fontMetrics()
+        w = min(fm.horizontalAdvance(text) + 24, option.rect.width() - 8)
+        h = 22
+        pad_x = (option.rect.width() - w) // 2
+        pad_y = (option.rect.height() - h) // 2
+        rect = option.rect.adjusted(pad_x, pad_y, -pad_x, -pad_y)
+        # 「已变更」可点击，悬停时底色加深一档
+        hovered = bool(option.state & QStyle.State_MouseOver) and text == "已变更"
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#FEF3C7" if hovered else bg))
+        painter.drawRoundedRect(rect, 11, 11)
+        if bd:
+            painter.setPen(QColor(bd))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(rect.adjusted(0, 0, -1, -1), 11, 11)
+        painter.setPen(QColor(tx))
+        painter.drawText(rect, Qt.AlignCenter, text)
+        painter.restore()
+
+    def sizeHint(self, option, index) -> QSize:  # noqa: N802
+        return QSize(88, T.ROW_H)
+
+
+# ================================================================ 状态分段器
+
+class SegmentedControl(QFrame):
+    """「全部/新增/已变更/无变化」互斥分段器，替代下拉框。"""
+
+    changed = Signal(str)
+
+    def __init__(self, options: list[tuple[str, str]], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setProperty("segmented", True)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(3, 3, 3, 3)
+        lay.setSpacing(2)
+        self.group = QButtonGroup(self)
+        self.group.setExclusive(True)
+        for i, (value, label) in enumerate(options):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setProperty("segBtn", True)
+            btn.setProperty("role", value)
+            btn.setChecked(i == 0)
+            btn.clicked.connect(lambda _=False, v=value: self.changed.emit(v))
+            self.group.addButton(btn)
+            lay.addWidget(btn)
+
+    def value(self) -> str:
+        return self.group.checkedButton().property("role")
+
+
+# ================================================================ 变更弹窗
 
 class ChangeDialog(QDialog):
-    """变更详情弹窗：点弹窗外空白处即关闭。"""
+    """变更详情弹窗：投影卡片 + 点遮罩关闭。"""
 
     def __init__(self, org: dict, diffs: list[dict], parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -70,12 +175,11 @@ class ChangeDialog(QDialog):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog)
         self.setAttribute(Qt.WA_TranslucentBackground)
 
-        st_label = {"new": "新增", "upd": "已变更"}.get(org["status"], "—")
         title = QLabel("变更详情")
-        title.setStyleSheet("font-size:14px;font-weight:600;")
+        title.setStyleSheet(f"font-size:14px;font-weight:600;color:{T.TEXT_1};")
         close = QLabel("✕")
         close.setCursor(Qt.PointingHandCursor)
-        close.setStyleSheet("color:#8c8c8c;font-size:14px;")
+        close.setStyleSheet(f"color:{T.TEXT_3};font-size:14px;padding:2px 6px;border-radius:4px;")
         close.mousePressEvent = lambda _: self.reject()
 
         head = QHBoxLayout()
@@ -84,38 +188,42 @@ class ChangeDialog(QDialog):
         head.addWidget(close)
 
         org_lab = QLabel(org["name"])
-        org_lab.setStyleSheet("font-size:14px;font-weight:600;")
+        org_lab.setStyleSheet(f"font-size:14px;font-weight:600;color:{T.TEXT_1};")
         meta = QLabel(f"{org['province']} · {org['level']} · 机构编号 {org['org_code']}")
-        meta.setStyleSheet(f"color:{C_GREY_TX};font-size:12px;")
+        meta.setStyleSheet(f"color:{T.TEXT_3};font-size:12px;")
 
         body = QVBoxLayout()
+        body.setContentsMargins(24, 20, 24, 18)
+        body.setSpacing(6)
         body.addLayout(head)
-        body.addSpacing(10)
+        body.addSpacing(8)
         body.addWidget(org_lab)
         body.addWidget(meta)
-        body.addSpacing(6)
+        body.addSpacing(8)
 
         if diffs:
             for d in diffs:
                 row = QLabel(
-                    f"<span style='color:{C_GREY_TX}'>{d['field']}：</span>"
-                    f"<span style='color:{C_GREY_TX};text-decoration:line-through'>{d['old_val']}</span>"
-                    f" → <span style='color:{C_GREEN_TX}'>{d['new_val']}</span>"
+                    f"<span style='color:{T.TEXT_2}'>{d['field']}："
+                    f"<span style='text-decoration:line-through'>{d['old_val']}</span></span>"
+                    f" <span style='color:{T.TEXT_3}'>→</span>"
+                    f" <span style='color:{T.NEW_TX}'>{d['new_val']}</span>"
                 )
                 row.setWordWrap(True)
                 row.setStyleSheet(
-                    "background:#fafafa;border-radius:6px;padding:8px 12px;font-size:13px;"
+                    f"background:{T.BG_PAGE};border-radius:{T.RADIUS_MD}px;"
+                    "padding:9px 14px;font-size:13px;"
                 )
                 body.addWidget(row)
         else:
             tip = QLabel("该机构在本轮刷新中发生了变更，历史明细已记录。")
-            tip.setStyleSheet(f"color:{C_GREY_TX};")
+            tip.setStyleSheet(f"color:{T.TEXT_3};")
             body.addWidget(tip)
 
-        body.addSpacing(8)
+        body.addSpacing(10)
         foot = QHBoxLayout()
         date_lab = QLabel(f"更新日期：{org['updated_at'] or '—'}")
-        date_lab.setStyleSheet(f"color:{C_AMBER_TX};font-size:12px;")
+        date_lab.setStyleSheet(f"color:{T.UPD_TX};font-size:12px;")
         btn = QPushButton("关闭")
         btn.setCursor(Qt.PointingHandCursor)
         btn.clicked.connect(self.reject)
@@ -125,12 +233,14 @@ class ChangeDialog(QDialog):
         body.addLayout(foot)
 
         card = QFrame()
+        card.setObjectName("modalCard")
         card.setLayout(body)
-        card.setStyleSheet(
-            "QFrame{background:white;border-radius:10px;}"
-            "QLabel{border:none;background:transparent;}"
-        )
-        card.setFixedWidth(540)
+        card.setFixedWidth(560)
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(48)
+        shadow.setOffset(0, 10)
+        shadow.setColor(QColor(31, 35, 41, 46))
+        card.setGraphicsEffect(shadow)
 
         outer = QVBoxLayout(self)
         outer.addStretch()
@@ -141,14 +251,13 @@ class ChangeDialog(QDialog):
         outer.addLayout(h)
         outer.addStretch()
 
-    # 点击弹窗外的遮罩区域关闭
-    def mousePressEvent(self, event) -> None:  # noqa: N802
+    def mousePressEvent(self, event) -> None:  # noqa: N802 — 点遮罩空白处关闭
         if event.button() == Qt.LeftButton and not self.childAt(event.position().toPoint()):
             self.reject()
         super().mousePressEvent(event)
 
 
-# ---------------------------------------------------------------- 主窗口
+# ================================================================ 主窗口
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
@@ -156,12 +265,18 @@ class MainWindow(QMainWindow):
         self.db = Database()
         self.all_rows: list[dict] = []
         self.worker: RefreshWorker | None = None
+        self._spinner_timer = QTimer(self)
+        self._spinner_timer.setInterval(120)
+        self._spinner_timer.timeout.connect(self._tick_spinner)
+        self._spin_frame = 0
+        self._spin_frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
         self.setWindowTitle("流动人员人事档案管理机构监测工作台")
-        self.resize(1280, 760)
+        self.resize(1320, 780)
+        self.setWindowIcon(_app_icon())
         self._build_ui()
         self._load()
 
-        # 可选每日自动刷新（24 小时定时器，勾选后启动）
         self.timer = QTimer(self)
         self.timer.setInterval(24 * 3600 * 1000)
         self.timer.timeout.connect(self.start_refresh)
@@ -174,88 +289,114 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         central = QWidget()
         root = QVBoxLayout(central)
-        root.setContentsMargins(24, 0, 24, 0)
-        root.setSpacing(10)
+        root.setContentsMargins(T.PAGE_MARGIN, 16, T.PAGE_MARGIN, 4)
+        root.setSpacing(T.BLOCK_GAP)
 
-        # 顶栏
-        top = QHBoxLayout()
-        title = QLabel("流动人员人事档案管理机构监测工作台")
-        title.setStyleSheet("font-size:15px;font-weight:600;")
+        # ---- 顶栏：标题 + 副题 | 操作按钮
+        head = QHBoxLayout()
+        title_box = QVBoxLayout()
+        title_box.setSpacing(2)
+        t1 = QLabel("流动人员人事档案管理机构监测工作台")
+        t1.setProperty("appTitle", True)
+        t2 = QLabel("数据来源：chrm.mohrss.gov.cn · 全国 31 省 3551 条机构")
+        t2.setProperty("appSubtitle", True)
+        title_box.addWidget(t1)
+        title_box.addWidget(t2)
+        head.addLayout(title_box)
+        head.addStretch()
+
         self.btn_export = QPushButton("导出 Excel")
+        self.btn_export.setFixedHeight(T.CONTROL_H)
         self.btn_export.setCursor(Qt.PointingHandCursor)
         self.btn_export.clicked.connect(self.on_export)
         self.btn_refresh = QPushButton("刷新数据")
+        self.btn_refresh.setProperty("primary", True)
+        self.btn_refresh.setFixedHeight(T.CONTROL_H)
         self.btn_refresh.setCursor(Qt.PointingHandCursor)
-        self.btn_refresh.setStyleSheet(
-            f"QPushButton{{background:{C_ACCENT};color:white;border:none;"
-            "border-radius:6px;padding:6px 18px;}"
-            "QPushButton:hover{background:#4096ff;}"
-            "QPushButton:disabled{background:#91caff;}"
-        )
+        self.btn_refresh.setMinimumWidth(96)
         self.btn_refresh.clicked.connect(self.start_refresh)
-        top.addWidget(title)
-        top.addStretch()
-        top.addWidget(self.btn_export)
-        top.addWidget(self.btn_refresh)
-        root.addLayout(top)
+        head.addWidget(self.btn_export)
+        head.addWidget(self.btn_refresh)
+        root.addLayout(head)
 
-        # 筛选行
+        # ---- 分隔线
+        line = QFrame()
+        line.setFixedHeight(1)
+        line.setStyleSheet(f"background:{T.DIVIDER};border:none;")
+        root.addWidget(line)
+
+        # ---- 筛选行：省份/层级 + 状态分段器 + 搜索
         filt = QHBoxLayout()
+        filt.setSpacing(8)
         self.cb_prov = QComboBox()
         self.cb_level = QComboBox()
-        self.cb_status = QComboBox()
         for combo, items in (
             (self.cb_prov, ["全部省份"]),
             (self.cb_level, ["全部层级", "省", "市、地区", "县（区）"]),
-            (self.cb_status, ["全部状态", "新增", "已变更", "无变化"]),
         ):
             combo.addItems(items)
+            combo.setFixedHeight(T.CONTROL_H)
+            combo.setMinimumWidth(120)
             combo.currentIndexChanged.connect(self.refresh_table)
             filt.addWidget(combo)
         self.cb_prov.currentIndexChanged.connect(self.refresh_table)
+
+        self.seg_status = SegmentedControl(
+            [("all", "全部"), ("new", "新增"), ("upd", "已变更"), ("ok", "无变化")]
+        )
+        self.seg_status.changed.connect(self.refresh_table)
+        filt.addWidget(self.seg_status)
+
         self.ed_search = QLineEdit()
         self.ed_search.setPlaceholderText("搜索机构名称 / 地址 / 电话")
+        self.ed_search.setFixedHeight(T.CONTROL_H)
         self.ed_search.setFixedWidth(260)
+        self.ed_search.setClearButtonEnabled(True)
         self.ed_search.textChanged.connect(self.refresh_table)
         filt.addWidget(self.ed_search)
         filt.addStretch()
         self.lab_count = QLabel("共 0 条")
-        self.lab_count.setStyleSheet(f"color:{C_GREY_TX};font-size:12px;")
+        self.lab_count.setProperty("caption", True)
         filt.addWidget(self.lab_count)
         root.addLayout(filt)
 
-        # 表格
+        # ---- 表格
         self.table = QTableWidget(0, len(COLS))
         self.table.setHorizontalHeaderLabels(COLS)
         self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(T.ROW_H)
         self.table.setShowGrid(False)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SingleSelection)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.setStyleSheet(
-            "QTableWidget{border:1px solid #e8e8e8;border-radius:8px;}"
-            "QHeaderView::section{border:none;border-bottom:1px solid #e8e8e8;"
-            "padding:8px;background:white;color:#8c8c8c;font-weight:500;}"
-        )
-        self.table.verticalHeader().setDefaultSectionSize(34)
+        self.table.setMouseTracking(True)  # 徽章悬停加深
+        self.table.setItemDelegateForColumn(COL_STATUS, BadgeDelegate(self.table))
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeToContents)
-        for col in (3, 5):  # 机构全称、通讯地址自适应拉伸
-            header.setSectionResizeMode(col, QHeaderView.Stretch)
-        header.setStretchLastSection(True)
+        header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        header.setFixedHeight(44)
+        # 显式列宽：大表下 ResizeToContents 全列测量代价高且不稳，改用固定 + 双拉伸列
+        for col, width in ((0, 52), (1, 104), (2, 100), (4, 84),
+                           (6, 168), (COL_STATUS, 92), (8, 100)):
+            header.setSectionResizeMode(col, QHeaderView.Fixed)
+            self.table.setColumnWidth(col, width)
+        header.setSectionResizeMode(3, QHeaderView.Stretch)   # 机构全称
+        header.setSectionResizeMode(5, QHeaderView.Stretch)   # 通讯地址
+        self.table.setColumnWidth(COL_STATUS, 92)
+        header.setStretchLastSection(False)
+        self.table.setHorizontalScrollMode(QTableWidget.ScrollPerPixel)
         self.table.cellClicked.connect(self.on_cell_clicked)
         root.addWidget(self.table, 1)
 
         self.setCentralWidget(central)
 
-        # 状态栏
+        # ---- 状态栏
         bar = QStatusBar()
-        bar.setStyleSheet("color:#8c8c8c;font-size:12px;")
+        bar.setSizeGripEnabled(False)
         self.setStatusBar(bar)
         last = self.db.get_meta("last_refresh") or "—"
         self.lab_last = QLabel(f"上次刷新：{last}")
-        self.lab_source = QLabel("数据源：chrm.mohrss.gov.cn")
+        self.lab_source = QLabel("数据源正常 · chrm.mohrss.gov.cn")
         self.auto_check = QCheckBox("每日自动刷新")
-        self.auto_check.setStyleSheet(f"color:{C_GREY_TX};font-size:12px;")
         self.lab_state = QLabel("就绪")
         for w in (self.lab_last, self.lab_source):
             bar.addWidget(w)
@@ -280,16 +421,15 @@ class MainWindow(QMainWindow):
     def _filtered(self) -> list[dict]:
         prov = self.cb_prov.currentText()
         lv = self.cb_level.currentText()
-        st = self.cb_status.currentText()
+        st = self.seg_status.value()
         kw = self.ed_search.text().strip().lower()
-        st_map = {"新增": "new", "已变更": "upd", "无变化": "ok"}
         rows = self.all_rows
         if prov and prov != "全部省份":
             rows = [r for r in rows if r["province"] == prov]
         if lv != "全部层级":
             rows = [r for r in rows if r["level"] == lv]
-        if st != "全部状态":
-            rows = [r for r in rows if r["status"] == st_map[st]]
+        if st != "all":
+            rows = [r for r in rows if r["status"] == st]
         if kw:
             rows = [r for r in rows if kw in
                     (r["name"] + r["addr"] + r["tel"] + r["org_code"]).lower()]
@@ -299,45 +439,29 @@ class MainWindow(QMainWindow):
         rows = self._filtered()
         table = self.table
         table.setRowCount(len(rows))
-        st_label = {"new": "新增", "upd": "已变更"}
 
         for i, r in enumerate(rows):
             vals = [str(i + 1), r["admin_code"], r["org_code"], r["name"], r["level"],
                     r["addr"], r["tel"],
-                    st_label.get(r["status"], "—"), r["updated_at"] or "—"]
+                    ST_TAG.get(r["status"], "—"), r["updated_at"] or "—"]
             for c, text in enumerate(vals):
                 item = QTableWidgetItem(text)
-                if c in (0, 1, 2):
-                    item.setForeground(QColor(C_GREY_TX))
+                if c in (0, 1, 2, 5):
+                    item.setForeground(QColor(T.TEXT_2))
                 if c == 3:
                     f = item.font()
                     f.setWeight(QFont.DemiBold)
                     item.setFont(f)
-                if c == 5:
-                    item.setForeground(QColor(C_GREY_TX))
-                if c == 7:
-                    if r["status"] == "new":
-                        item.setBackground(QColor(C_GREEN_BG))
-                        item.setForeground(QColor(C_GREEN_TX))
-                        item.setTextAlignment(Qt.AlignCenter)
-                    elif r["status"] == "upd":
-                        item.setBackground(QColor(C_AMBER_BG))
-                        item.setForeground(QColor(C_AMBER_TX))
-                        item.setTextAlignment(Qt.AlignCenter)
-                    else:
-                        item.setForeground(QColor("#d9d9d9"))
-                        item.setTextAlignment(Qt.AlignCenter)
-                if c == 8 and not r["updated_at"]:
-                    item.setForeground(QColor("#d9d9d9"))
+                if c == 8:
+                    item.setForeground(
+                        QColor(T.UPD_TX if r["updated_at"] else T.TEXT_DISABLED)
+                    )
+                if c in (0, 7, 8):
+                    item.setTextAlignment(Qt.AlignCenter)
                 item.setData(Qt.UserRole, i)
                 table.setItem(i, c, item)
 
         self.lab_count.setText(f"共 {len(rows)} 条")
-        # 「已变更」标签显示手型光标
-        table.setCursor(
-            Qt.PointingHandCursor
-            if any(r["status"] == "upd" for r in rows) else Qt.ArrowCursor
-        )
 
     # ---------- 交互 ----------
 
@@ -347,8 +471,7 @@ class MainWindow(QMainWindow):
         item = self.table.item(row, col)
         if not item or item.text() != "已变更":
             return
-        src_row = item.data(Qt.UserRole)
-        org = self._filtered()[src_row]
+        org = self._filtered()[item.data(Qt.UserRole)]
         dlg = ChangeDialog(org, self.db.get_diffs(org["org_code"], org["last_batch"]), self)
         dlg.exec()
 
@@ -356,18 +479,28 @@ class MainWindow(QMainWindow):
         if self.worker and self.worker.isRunning():
             return
         self.btn_refresh.setEnabled(False)
-        self.lab_state.setText("正在抓取 31 个省份页面…")
+        self.btn_refresh.setText("刷新中…")
+        self._spin_frame = 0
+        self._spinner_timer.start()
         self.worker = RefreshWorker(self.db)
         self.worker.progress.connect(lambda m: self.lab_state.setText(m))
         self.worker.done.connect(self.on_refresh_done)
         self.worker.failed.connect(self.on_refresh_failed)
         self.worker.start()
 
+    def _tick_spinner(self) -> None:
+        self._spin_frame = (self._spin_frame + 1) % len(self._spin_frames)
+        self.lab_state.setText(
+            f"{self._spin_frames[self._spin_frame]} 正在抓取并对比快照…"
+        )
+
     def on_refresh_done(self, payload: dict) -> None:
         stats = payload["stats"]
+        self._spinner_timer.stop()
         self.btn_refresh.setEnabled(True)
-        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        self.btn_refresh.setText("刷新数据")
         self.lab_state.setText("就绪")
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
         self.lab_last.setText(f"上次刷新：{now}")
         self._load()
         QMessageBox.information(
@@ -377,7 +510,9 @@ class MainWindow(QMainWindow):
         )
 
     def on_refresh_failed(self, msg: str) -> None:
+        self._spinner_timer.stop()
         self.btn_refresh.setEnabled(True)
+        self.btn_refresh.setText("刷新数据")
         self.lab_state.setText("刷新失败")
         QMessageBox.critical(self, "刷新失败", f"抓取数据时出错：\n{msg}\n\n请检查网络后重试。")
 
@@ -406,20 +541,168 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 
+# ================================================================ 图标与全局样式
+
+def _app_icon() -> QIcon:
+    """程序图标：品牌蓝圆角方块 + 白色「档」字，纯代码绘制无需资源文件。"""
+    pm = QPixmap(64, 64)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setBrush(QColor(T.PRIMARY))
+    p.setPen(Qt.NoPen)
+    p.drawRoundedRect(4, 4, 56, 56, 14, 14)
+    f = QFont()
+    f.setPixelSize(30)
+    f.setBold(True)
+    p.setFont(f)
+    p.setPen(QColor("white"))
+    p.drawText(pm.rect(), Qt.AlignCenter, "档")
+    p.end()
+    return QIcon(pm)
+
+
+def build_qss() -> str:
+    """全局 QSS，全部取值自设计令牌 T。"""
+    return f"""
+    * {{
+        font-family: {T.FONT_FAMILY};
+        font-size: 13px;
+        color: {T.TEXT_1};
+        background: {T.BG_PAGE};
+    }}
+    QLabel {{ background: transparent; }}
+    QLabel[appTitle]    {{ font-size: 17px; font-weight: 600; }}
+    QLabel[appSubtitle] {{ font-size: 12px; color: {T.TEXT_3}; }}
+    QLabel[caption]     {{ font-size: 12px; color: {T.TEXT_3}; }}
+
+    QPushButton {{
+        background: {T.BG_SURFACE};
+        border: 1px solid {T.BORDER};
+        border-radius: {T.RADIUS_MD}px;
+        padding: 0 18px;
+        height: {T.CONTROL_H}px;
+        font-size: 13px;
+        font-weight: 500;
+    }}
+    QPushButton:hover {{ border-color: {T.PRIMARY}; color: {T.PRIMARY}; }}
+    QPushButton:pressed {{ background: {T.BG_PAGE}; }}
+    QPushButton:disabled {{ opacity: 0.55; }}
+    QPushButton[primary="true"] {{
+        background: {T.PRIMARY}; border: none; color: white; padding: 0 22px;
+    }}
+    QPushButton[primary="true"]:hover   {{ background: {T.PRIMARY_HOVER}; color: white; }}
+    QPushButton[primary="true"]:pressed {{ background: {T.PRIMARY_ACTIVE}; }}
+    QPushButton[primary="true"]:disabled {{ background: #A9C9FF; color: white; }}
+
+    QLineEdit, QComboBox {{
+        background: {T.BG_SURFACE};
+        border: 1px solid {T.BORDER};
+        border-radius: {T.RADIUS_MD}px;
+        padding: 0 10px;
+        color: {T.TEXT_1};
+    }}
+    QLineEdit:focus, QComboBox:focus {{ border-color: {T.PRIMARY}; }}
+    QLineEdit::placeholder {{ color: {T.TEXT_DISABLED}; }}
+    QComboBox::drop-down {{ border: none; width: 28px; }}
+    QComboBox QAbstractItemView {{
+        background: {T.BG_SURFACE};
+        border: 1px solid {T.BORDER};
+        border-radius: {T.RADIUS_MD}px;
+        selection-background-color: {T.PRIMARY_BG};
+        selection-color: {T.TEXT_1};
+        outline: none;
+    }}
+
+    /* 状态分段器 */
+    QFrame[segmented="true"] {{
+        background: {T.BG_PAGE};
+        border: 1px solid {T.BORDER};
+        border-radius: 17px;
+    }}
+    QPushButton[segBtn="true"] {{
+        background: transparent; border: 1px solid transparent;
+        border-radius: 14px; padding: 0 14px; height: 24px;
+        color: {T.TEXT_2}; font-size: 12px;
+    }}
+    QPushButton[segBtn="true"]:hover {{ color: {T.TEXT_1}; }}
+    QPushButton[segBtn="true"]:checked {{
+        background: {T.BG_SURFACE}; border-color: {T.BORDER}; color: {T.TEXT_1};
+    }}
+    QPushButton[segBtn="true"][role="new"]:checked {{ color: {T.NEW_TX}; }}
+    QPushButton[segBtn="true"][role="upd"]:checked {{ color: {T.UPD_TX}; }}
+
+    /* 表格 */
+    QTableWidget {{
+        background: {T.BG_SURFACE};
+        alternate-background-color: {T.BG_SURFACE};
+        border: 1px solid {T.BORDER};
+        border-radius: {T.RADIUS_LG}px;
+        gridline-color: transparent;
+        selection-background-color: {T.PRIMARY_BG};
+        selection-color: {T.TEXT_1};
+        outline: none;
+    }}
+    QTableWidget::item {{ padding: 0 14px; border-bottom: 1px solid {T.DIVIDER}; }}
+    QTableWidget::item:hover {{ background: {T.BG_HOVER}; }}
+    QTableWidget::item:selected {{ background: {T.PRIMARY_BG}; }}
+    QHeaderView::section {{
+        background: {T.BG_SURFACE};
+        color: {T.TEXT_3};
+        border: none;
+        border-bottom: 1px solid {T.BORDER};
+        padding: 0 14px;
+        font-size: 12px;
+        font-weight: 500;
+    }}
+    QTableCornerButton::section {{ background: {T.BG_SURFACE}; border: none; }}
+
+    /* 滚动条 */
+    QScrollBar:vertical {{ background: transparent; width: 10px; margin: 4px 3px; }}
+    QScrollBar::handle:vertical {{
+        background: #D5D9E0; border-radius: 4px; min-height: 32px;
+    }}
+    QScrollBar::handle:vertical:hover {{ background: #BFC4CC; }}
+    QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
+    QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
+
+    /* 状态栏 */
+    QStatusBar {{
+        background: {T.BG_PAGE};
+        color: {T.TEXT_3};
+        font-size: 12px;
+        border-top: 1px solid {T.DIVIDER};
+    }}
+    QStatusBar QLabel {{ color: {T.TEXT_3}; font-size: 12px; padding: 0 8px; }}
+    QStatusBar::item {{ border: none; }}
+    QCheckBox {{
+        color: {T.TEXT_3}; font-size: 12px; background: transparent; spacing: 6px;
+    }}
+    QCheckBox::indicator {{
+        width: 14px; height: 14px; border: 1px solid {T.BORDER};
+        border-radius: 3px; background: {T.BG_SURFACE};
+    }}
+    QCheckBox::indicator:checked {{
+        background: {T.PRIMARY}; border-color: {T.PRIMARY};
+    }}
+
+    /* 弹窗 */
+    QFrame#modalCard {{ background: {T.BG_SURFACE}; border-radius: {T.RADIUS_LG}px; }}
+    QFrame#modalCard QLabel {{ background: transparent; border: none; }}
+
+    QMessageBox {{ background: {T.BG_SURFACE}; }}
+    QMessageBox QLabel {{ background: transparent; font-size: 13px; }}
+    QToolTip {{
+        background: {T.BG_SURFACE}; color: {T.TEXT_1};
+        border: 1px solid {T.BORDER}; padding: 4px 8px; font-size: 12px;
+    }}
+    """
+
+
 def main() -> None:
     app = QApplication(sys.argv)
-    app.setStyleSheet(
-        "QWidget{font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;"
-        "font-size:13px;color:#262626;background:#fafafa;}"
-        "QLineEdit,QComboBox{background:white;border:1px solid #e8e8e8;"
-        "border-radius:6px;padding:5px 10px;}"
-        "QLineEdit:focus,QComboBox:focus{border-color:#1677ff;}"
-        "QPushButton{border:1px solid #e8e8e8;border-radius:6px;padding:6px 16px;background:white;}"
-        "QPushButton:hover{border-color:#bfbfbf;color:#1677ff;}"
-        "QTableWidget::item{border-bottom:1px solid #f5f5f5;}"
-        "QTableWidget::item:selected{background:#f0f7ff;color:#262626;}"
-        "QToolTip{background:white;color:#262626;border:1px solid #e8e8e8;}"
-    )
+    app.setWindowIcon(_app_icon())
+    app.setStyleSheet(build_qss())
     win = MainWindow()
     win.show()
     sys.exit(app.exec())
