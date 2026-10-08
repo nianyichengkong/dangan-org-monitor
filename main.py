@@ -570,6 +570,21 @@ class MainWindow(QMainWindow):
 
 # ================================================================ 图标与全局样式
 
+# Windows 运行互斥体：① 配合安装包 AppMutex 检测"程序正在运行"；
+# ② 句柄保存在模块级变量，进程存活期间持锁，退出时自动释放
+_win_mutex_handle = None
+
+
+def _acquire_runtime_mutex() -> None:
+    global _win_mutex_handle
+    if sys.platform == "win32":
+        import ctypes
+
+        _win_mutex_handle = ctypes.windll.kernel32.CreateMutexW(
+            None, False, "DanganOrgMonitorMutex"
+        )
+
+
 def _app_icon() -> QIcon:
     """程序图标：校徽蓝→生命绿渐变圆角方块 + 白色「档」字，纯代码绘制。"""
     pm = QPixmap(64, 64)
@@ -739,6 +754,7 @@ def main() -> None:
     app = QApplication(sys.argv)
     app.setWindowIcon(_app_icon())
     app.setStyleSheet(build_qss())
+    _acquire_runtime_mutex()
     win = MainWindow()
     win.show()
     sys.exit(app.exec())

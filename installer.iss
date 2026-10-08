@@ -13,6 +13,8 @@ Compression=lzma2
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
+; 程序运行时持有该互斥体：安装前若检测到会提示"程序正在运行"
+AppMutex=DanganOrgMonitorMutex
 
 [Languages]
 Name: "cn"; MessagesFile: "ChineseSimplified.isl"
@@ -32,3 +34,29 @@ Name: "{autodesktop}\档案机构监测工作台"; Filename: "{app}\DanganOrgMon
 
 [Run]
 Filename: "{app}\DanganOrgMonitor.exe"; Description: "运行 档案机构监测工作台"; Flags: postinstall nowait skipifsilent
+
+[Code]
+// 复制文件前静默结束正在运行的旧版程序，
+// 避免 exe 被占用导致 DeleteFile failed code 5（拒绝访问）
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Result := '';
+  Exec(ExpandConstant('{cmd}'),
+       '/C taskkill /f /im DanganOrgMonitor.exe >nul 2>&1',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(800);  // 留出系统释放文件句柄的时间
+end;
+
+// 卸载前同样先结束程序，避免卸载残留
+function InitializeUninstall(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{cmd}'),
+       '/C taskkill /f /im DanganOrgMonitor.exe >nul 2>&1',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(800);
+  Result := True;
+end;
