@@ -9,10 +9,10 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 HEADERS = [
-    "序号", "行政区划代码", "机构编号", "机构全称", "机构层级",
+    "序号", "行政区划代码", "机构编号", "所属省份", "机构全称", "机构层级",
     "通讯地址", "联系电话", "更新状态", "更新日期",
 ]
-WIDTHS = [6, 12, 12, 42, 10, 52, 26, 10, 12]
+WIDTHS = [6, 12, 12, 10, 42, 10, 52, 26, 10, 12]
 
 # 变更行浅黄、新增行浅绿，与工作台标签色一致
 FILL_UPD = PatternFill("solid", fgColor="FFFBE6")
@@ -48,11 +48,9 @@ def export(rows: list[dict], path: Path) -> None:
     # 数据行
     st_label = {"new": "新增", "upd": "已变更"}
     for i, r in enumerate(rows, 1):
-        # 机构全称前缀省份，与工作台表格显示规则一致
         status = st_label.get(r["status"], "—")
-        vals = [i, r["admin_code"], r["org_code"],
-                f"{r['province']}·{r['name']}", r["level"],
-                r["addr"], r["tel"], status, r["updated_at"] or "—"]
+        vals = [i, r["admin_code"], r["org_code"], r["province"], r["name"],
+                r["level"], r["addr"], r["tel"], status, r["updated_at"] or "—"]
         for c, v in enumerate(vals, 1):
             cell = ws.cell(row=i + 1, column=c, value=v)
             cell.border = BORDER

@@ -24,9 +24,9 @@ from database import Database
 from exporter import export
 from scraper import fetch_all
 
-COLS = ["序号", "行政区划代码", "机构编号", "机构全称", "机构层级",
+COLS = ["序号", "行政区划代码", "机构编号", "所属省份", "机构全称", "机构层级",
         "通讯地址", "联系电话", "更新状态", "更新日期"]
-COL_STATUS = 7
+COL_STATUS = 8
 
 
 # ================================================================ 设计令牌
@@ -402,12 +402,12 @@ class MainWindow(QMainWindow):
         header.setFixedHeight(44)
         # 显式列宽：大表下 ResizeToContents 全列测量代价高且不稳，改用固定 + 双拉伸列
         # 序号 68px：需容纳 4 位数（3551+），窄了会被省略成 "..."
-        for col, width in ((0, 68), (1, 104), (2, 100), (4, 96),
-                           (6, 168), (COL_STATUS, 92), (8, 100)):
+        for col, width in ((0, 68), (1, 104), (2, 100), (3, 76), (5, 96),
+                           (7, 168), (COL_STATUS, 92), (9, 100)):
             header.setSectionResizeMode(col, QHeaderView.Fixed)
             self.table.setColumnWidth(col, width)
-        header.setSectionResizeMode(3, QHeaderView.Stretch)   # 机构全称
-        header.setSectionResizeMode(5, QHeaderView.Stretch)   # 通讯地址
+        header.setSectionResizeMode(4, QHeaderView.Stretch)   # 机构全称
+        header.setSectionResizeMode(6, QHeaderView.Stretch)   # 通讯地址
         self.table.setColumnWidth(COL_STATUS, 92)
         header.setStretchLastSection(False)
         self.table.setHorizontalScrollMode(QTableWidget.ScrollPerPixel)
@@ -468,25 +468,22 @@ class MainWindow(QMainWindow):
         table.setRowCount(len(rows))
 
         for i, r in enumerate(rows):
-            # 机构全称前缀省份，如「河南·郑州市人才交流中心」；导出 Excel 同规则
-            display_name = f"{r['province']}·{r['name']}"
-            vals = [str(i + 1), r["admin_code"], r["org_code"], display_name, r["level"],
-                    r["addr"], r["tel"],
+            vals = [str(i + 1), r["admin_code"], r["org_code"], r["province"], r["name"],
+                    r["level"], r["addr"], r["tel"],
                     ST_TAG.get(r["status"], "—"), r["updated_at"] or "—"]
             for c, text in enumerate(vals):
                 item = QTableWidgetItem(text)
-                if c in (0, 1, 2, 5):
+                if c in (0, 1, 2, 3, 6):
                     item.setForeground(QColor(T.TEXT_2))
-                if c == 3:
+                if c == 4:
                     f = item.font()
                     f.setWeight(QFont.DemiBold)
                     item.setFont(f)
-                    item.setToolTip(r["name"])
-                if c == 8:
+                if c == 9:
                     item.setForeground(
                         QColor(T.UPD_TX if r["updated_at"] else T.TEXT_DISABLED)
                     )
-                if c in (0, 7, 8):
+                if c in (0, 8, 9):
                     item.setTextAlignment(Qt.AlignCenter)
                 item.setData(Qt.UserRole, i)
                 table.setItem(i, c, item)
