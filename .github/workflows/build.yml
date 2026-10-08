@@ -1,0 +1,61 @@
+name: Build Windows App
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Build portable exe
+        run: pyinstaller --noconfirm --onefile --windowed --name DanganOrgMonitor main.py
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+        continue-on-error: true
+
+      - name: Download Chinese wizard language
+        shell: pwsh
+        run: |
+          try {
+            Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Unofficial/ChineseSimplified.isl" -OutFile "ChineseSimplified.isl"
+          } catch { Write-Host "download failed, will fall back to default language" }
+        continue-on-error: true
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { Write-Host "ISCC not found, skip installer"; exit 0 }
+          if (-not (Test-Path "ChineseSimplified.isl")) {
+            (Get-Content installer.iss -Raw -Encoding UTF8) -replace 'MessagesFile: "ChineseSimplified\.isl"', 'MessagesFile: "compiler:Default.isl"' | Set-Content installer.iss -Encoding UTF8
+          }
+          & $iscc installer.iss
+        continue-on-error: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: 档案机构监测工作台 v1.0.${{ github.run_number }}
+          body: |
+            **安装版**：DanganOrgMonitor-Setup.exe —— 双击安装，带桌面快捷方式，可在「应用和功能」中卸载。
+            **绿色版**：DanganOrgMonitor.exe —— 单文件直接运行，无需安装。
+          files: |
+            dist/DanganOrgMonitor.exe
+            installer/DanganOrgMonitor-Setup.exe
+          fail_on_unmatched_files: false
