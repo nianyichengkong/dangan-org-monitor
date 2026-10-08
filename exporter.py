@@ -48,8 +48,10 @@ def export(rows: list[dict], path: Path) -> None:
     # 数据行
     st_label = {"new": "新增", "upd": "已变更"}
     for i, r in enumerate(rows, 1):
+        # 机构全称前缀省份，与工作台表格显示规则一致
         status = st_label.get(r["status"], "—")
-        vals = [i, r["admin_code"], r["org_code"], r["name"], r["level"],
+        vals = [i, r["admin_code"], r["org_code"],
+                f"{r['province']}·{r['name']}", r["level"],
                 r["addr"], r["tel"], status, r["updated_at"] or "—"]
         for c, v in enumerate(vals, 1):
             cell = ws.cell(row=i + 1, column=c, value=v)

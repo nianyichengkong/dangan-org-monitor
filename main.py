@@ -161,6 +161,7 @@ class SegmentedControl(QFrame):
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setCursor(Qt.PointingHandCursor)
+            btn.setFixedHeight(26)  # 固定高度防止被布局拉伸成直角块
             btn.setProperty("segBtn", True)
             btn.setProperty("role", value)
             btn.setChecked(i == 0)
@@ -400,7 +401,8 @@ class MainWindow(QMainWindow):
         header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         header.setFixedHeight(44)
         # 显式列宽：大表下 ResizeToContents 全列测量代价高且不稳，改用固定 + 双拉伸列
-        for col, width in ((0, 52), (1, 104), (2, 100), (4, 84),
+        # 序号 68px：需容纳 4 位数（3551+），窄了会被省略成 "..."
+        for col, width in ((0, 68), (1, 104), (2, 100), (4, 96),
                            (6, 168), (COL_STATUS, 92), (8, 100)):
             header.setSectionResizeMode(col, QHeaderView.Fixed)
             self.table.setColumnWidth(col, width)
@@ -466,7 +468,9 @@ class MainWindow(QMainWindow):
         table.setRowCount(len(rows))
 
         for i, r in enumerate(rows):
-            vals = [str(i + 1), r["admin_code"], r["org_code"], r["name"], r["level"],
+            # 机构全称前缀省份，如「河南·郑州市人才交流中心」；导出 Excel 同规则
+            display_name = f"{r['province']}·{r['name']}"
+            vals = [str(i + 1), r["admin_code"], r["org_code"], display_name, r["level"],
                     r["addr"], r["tel"],
                     ST_TAG.get(r["status"], "—"), r["updated_at"] or "—"]
             for c, text in enumerate(vals):
@@ -477,6 +481,7 @@ class MainWindow(QMainWindow):
                     f = item.font()
                     f.setWeight(QFont.DemiBold)
                     item.setFont(f)
+                    item.setToolTip(r["name"])
                 if c == 8:
                     item.setForeground(
                         QColor(T.UPD_TX if r["updated_at"] else T.TEXT_DISABLED)
@@ -653,15 +658,18 @@ def build_qss() -> str:
     }}
     QPushButton[segBtn="true"] {{
         background: transparent; border: 1px solid transparent;
-        border-radius: 14px; padding: 0 14px; height: 24px;
+        border-radius: 12px; padding: 0 14px; height: 26px;
         color: {T.TEXT_2}; font-size: 12px;
     }}
     QPushButton[segBtn="true"]:hover {{ color: {T.TEXT_1}; }}
     QPushButton[segBtn="true"]:checked {{
-        background: {T.BG_SURFACE}; border-color: {T.BORDER}; color: {T.TEXT_1};
+        background: {T.BG_SURFACE};
+        border: 1px solid {T.BORDER};
+        border-radius: 12px;
+        color: {T.TEXT_1};
     }}
-    QPushButton[segBtn="true"][role="new"]:checked {{ color: {T.NEW_TX}; }}
-    QPushButton[segBtn="true"][role="upd"]:checked {{ color: {T.UPD_TX}; }}
+    QPushButton[segBtn="true"][role="new"]:checked {{ color: {T.NEW_TX}; background: {T.NEW_BG}; }}
+    QPushButton[segBtn="true"][role="upd"]:checked {{ color: {T.UPD_TX}; background: {T.UPD_BG}; }}
 
     /* 表格 */
     QTableWidget {{
