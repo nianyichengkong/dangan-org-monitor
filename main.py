@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QSize, QThread, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QLinearGradient, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog,
     QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QHeaderView, QLabel,
@@ -33,27 +33,35 @@ COL_STATUS = 7
 # 与《设计规范.md》一一对应
 
 class T:
-    """Design Tokens — 修改样式先改《设计规范.md》再同步此处。"""
+    """Design Tokens — 修改样式先改《设计规范.md》再同步此处。
 
-    # 品牌色
-    PRIMARY = "#1677FF"
-    PRIMARY_HOVER = "#4096FF"
-    PRIMARY_ACTIVE = "#0958D9"
-    PRIMARY_BG = "#E8F3FF"
+    配色体系（v1.1）：参考广东医科大学校徽「蓝 + 绿」双色——
+    蓝色象征未来与希望（主操作色），绿色象征茵茵校园（生命绿，刷新/成长语义）。
+    """
+
+    # 品牌色：校徽蓝（主）+ 生命绿（辅）
+    PRIMARY = "#1E7FD0"          # 医大蓝：导出、链接、选中
+    PRIMARY_HOVER = "#3D96E0"
+    PRIMARY_ACTIVE = "#1663A8"
+    PRIMARY_BG = "#E5F2FC"       # 浅蓝底（选中行）
+    ACCENT = "#3CB878"           # 生命绿：刷新按钮、图标渐变
+    ACCENT_HOVER = "#54C68C"
+    ACCENT_ACTIVE = "#2FA267"
+    ACCENT_BG = "#E6F7EE"        # 浅绿底
     # 中性色
-    BG_PAGE = "#F5F6F8"
+    BG_PAGE = "#F2F9F5"          # 薄荷白窗口底
     BG_SURFACE = "#FFFFFF"
-    BG_HOVER = "#F5F6F8"
-    BORDER = "#E5E7EB"
-    DIVIDER = "#F0F1F3"
-    TEXT_1 = "#1F2329"
-    TEXT_2 = "#646A73"
-    TEXT_3 = "#8F959E"
-    TEXT_DISABLED = "#BFC4CC"
+    BG_HOVER = "#EFF7F2"
+    BORDER = "#E3E9E5"
+    DIVIDER = "#EEF3EF"
+    TEXT_1 = "#1F2D26"
+    TEXT_2 = "#5F6E66"
+    TEXT_3 = "#8B9A92"
+    TEXT_DISABLED = "#BDC8C1"
     # 语义色：新增 / 已变更 / 无变化
     NEW_BG, NEW_BD, NEW_TX = "#F6FFED", "#B7EB8F", "#389E0D"
     UPD_BG, UPD_BD, UPD_TX = "#FFFBE6", "#FCE57F", "#D48806"
-    OK_BG, OK_TX = "#F5F5F5", "#8F959E"
+    OK_BG, OK_TX = "#F3F6F4", "#93A39B"
     # 字体
     FONT_FAMILY = "'Microsoft YaHei UI', 'PingFang SC', 'Segoe UI', sans-serif"
     # 圆角
@@ -292,20 +300,33 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(T.PAGE_MARGIN, 16, T.PAGE_MARGIN, 4)
         root.setSpacing(T.BLOCK_GAP)
 
-        # ---- 顶栏：标题 + 副题 | 操作按钮
+        # ---- 顶栏：双色标题 + 副题 | 操作按钮
         head = QHBoxLayout()
         title_box = QVBoxLayout()
         title_box.setSpacing(2)
-        t1 = QLabel("流动人员人事档案管理机构监测工作台")
+        t1 = QLabel()
         t1.setProperty("appTitle", True)
-        t2 = QLabel("数据来源：chrm.mohrss.gov.cn · 全国 31 省 3551 条机构")
+        t1.setTextFormat(Qt.RichText)
+        # 双色标题：蓝（信息）+ 绿（监测），呼应校徽蓝绿双色
+        t1.setText(
+            f"<span style='color:{T.PRIMARY}'>流动人员人事档案管理机构</span>"
+            f"<span style='color:{T.ACCENT}'>监测工作台</span>"
+        )
+        t2 = QLabel()
         t2.setProperty("appSubtitle", True)
+        t2.setTextFormat(Qt.RichText)
+        t2.setText(
+            f"<span style='color:{T.PRIMARY}'>●</span> 数据来源：chrm.mohrss.gov.cn"
+            f" &nbsp;<span style='color:{T.ACCENT}'>●</span> 全国 31 省 3551 条机构"
+        )
         title_box.addWidget(t1)
         title_box.addWidget(t2)
         head.addLayout(title_box)
         head.addStretch()
 
         self.btn_export = QPushButton("导出 Excel")
+        self.btn_export.setProperty("secondary", True)
+        self.btn_export.setProperty("tone", "blue")
         self.btn_export.setFixedHeight(T.CONTROL_H)
         self.btn_export.setCursor(Qt.PointingHandCursor)
         self.btn_export.clicked.connect(self.on_export)
@@ -319,10 +340,14 @@ class MainWindow(QMainWindow):
         head.addWidget(self.btn_refresh)
         root.addLayout(head)
 
-        # ---- 分隔线
+        # ---- 分隔线：蓝→绿渐变，呼应校徽双色
         line = QFrame()
-        line.setFixedHeight(1)
-        line.setStyleSheet(f"background:{T.DIVIDER};border:none;")
+        line.setFixedHeight(2)
+        line.setStyleSheet(
+            "background: qlineargradient(x1:0, y1:0, x2:1, y2:0,"
+            f" stop:0 {T.PRIMARY}, stop:0.55 {T.ACCENT}, stop:1 {T.ACCENT_BG});"
+            "border:none;border-radius:1px;"
+        )
         root.addWidget(line)
 
         # ---- 筛选行：省份/层级 + 状态分段器 + 搜索
@@ -544,12 +569,15 @@ class MainWindow(QMainWindow):
 # ================================================================ 图标与全局样式
 
 def _app_icon() -> QIcon:
-    """程序图标：品牌蓝圆角方块 + 白色「档」字，纯代码绘制无需资源文件。"""
+    """程序图标：校徽蓝→生命绿渐变圆角方块 + 白色「档」字，纯代码绘制。"""
     pm = QPixmap(64, 64)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.Antialiasing)
-    p.setBrush(QColor(T.PRIMARY))
+    grad = QLinearGradient(0, 0, 64, 64)
+    grad.setColorAt(0.0, QColor(T.PRIMARY))
+    grad.setColorAt(1.0, QColor(T.ACCENT))
+    p.setBrush(grad)
     p.setPen(Qt.NoPen)
     p.drawRoundedRect(4, 4, 56, 56, 14, 14)
     f = QFont()
@@ -589,11 +617,14 @@ def build_qss() -> str:
     QPushButton:pressed {{ background: {T.BG_PAGE}; }}
     QPushButton:disabled {{ opacity: 0.55; }}
     QPushButton[primary="true"] {{
-        background: {T.PRIMARY}; border: none; color: white; padding: 0 22px;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 {T.ACCENT_HOVER}, stop:1 {T.ACCENT});
+        border: none; color: white; padding: 0 22px;
     }}
-    QPushButton[primary="true"]:hover   {{ background: {T.PRIMARY_HOVER}; color: white; }}
-    QPushButton[primary="true"]:pressed {{ background: {T.PRIMARY_ACTIVE}; }}
-    QPushButton[primary="true"]:disabled {{ background: #A9C9FF; color: white; }}
+    QPushButton[primary="true"]:hover   {{ background: {T.ACCENT_HOVER}; color: white; }}
+    QPushButton[primary="true"]:pressed {{ background: {T.ACCENT_ACTIVE}; }}
+    QPushButton[primary="true"]:disabled {{ background: #A5DCBE; color: white; }}
+    QPushButton[tone="blue"]:hover {{ border-color: {T.PRIMARY}; color: {T.PRIMARY}; }}
 
     QLineEdit, QComboBox {{
         background: {T.BG_SURFACE};
@@ -683,7 +714,7 @@ def build_qss() -> str:
         border-radius: 3px; background: {T.BG_SURFACE};
     }}
     QCheckBox::indicator:checked {{
-        background: {T.PRIMARY}; border-color: {T.PRIMARY};
+        background: {T.ACCENT}; border-color: {T.ACCENT};
     }}
 
     /* 弹窗 */

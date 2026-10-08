@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from datetime import date
 from pathlib import Path
 
@@ -81,7 +82,10 @@ class Database:
     """SQLite 封装：读写机构快照、执行 diff、查询变更明细。"""
 
     def __init__(self, path: Path | None = None) -> None:
-        self.conn = sqlite3.connect(str(path or db_path()))
+        # 刷新在 QThread 工作线程中写入，连接必须允许跨线程使用；
+        # 用可重入锁串行化所有语句，避免与主线程的读取并发冲突
+        self._lock = threading.RLock()
+        self.conn = sqlite3.connect(str(path or db_path()), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
         self.conn.commit()
@@ -90,22 +94,27 @@ class Database:
 
     def all_orgs(self) -> list[dict]:
         """返回全部机构（含状态/更新日期），按省份+区划代码排序。"""
-        cur = self.conn.execute(
-            "SELECT * FROM institutions ORDER BY province, admin_code, org_code"
-        )
-        return [dict(r) for r in cur.fetchall()]
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT * FROM institutions ORDER BY province, admin_code, org_code"
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     def get_meta(self, key: str) -> str | None:
-        row = self.conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT value FROM meta WHERE key=?", (key,)
+            ).fetchone()
         return row["value"] if row else None
 
     def set_meta(self, key: str, value: str) -> None:
-        self.conn.execute(
-            "INSERT INTO meta(key, value) VALUES(?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, value),
-        )
-        self.conn.commit()
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO meta(key, value) VALUES(?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, value),
+            )
+            self.conn.commit()
 
     # ---------- diff 核心 ----------
 
@@ -119,6 +128,11 @@ class Database:
             统计结果 ``{"new": n, "upd": n, "del": n, "total": n, "batch": b}``。
         """
         today = date.today().isoformat()
+        with self._lock:
+            return self._apply_refresh_locked(fresh, today)
+
+    def _apply_refresh_locked(self, fresh: list[Org], today: str) -> dict:
+        """apply_refresh 的锁内实现（调用方已持有 self._lock）。"""
         old_map = {
             r["org_code"]: r for r in self.conn.execute("SELECT * FROM institutions")
         }
@@ -210,20 +224,23 @@ class Database:
 
     def get_diffs(self, org_code: str, batch: int) -> list[dict]:
         """取某机构在指定批次的全部字段变更（用于弹窗展示）。"""
-        cur = self.conn.execute(
-            "SELECT field, old_val, new_val FROM changes"
-            " WHERE org_code=? AND batch=? AND change_type='upd' AND field!=''",
-            (org_code, batch),
-        )
-        return [dict(r) for r in cur.fetchall()]
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT field, old_val, new_val FROM changes"
+                " WHERE org_code=? AND batch=? AND change_type='upd' AND field!=''",
+                (org_code, batch),
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     def recent_changes(self, limit: int = 50) -> list[dict]:
         """最近一批的变更事件摘要（刷新后 toast 用）。"""
-        cur = self.conn.execute(
-            "SELECT change_type, COUNT(*) c FROM changes"
-            " WHERE batch=(SELECT MAX(batch) FROM changes) GROUP BY change_type"
-        )
-        return [dict(r) for r in cur.fetchall()]
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT change_type, COUNT(*) c FROM changes"
+                " WHERE batch=(SELECT MAX(batch) FROM changes) GROUP BY change_type"
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     def close(self) -> None:
-        self.conn.close()
+        with self._lock:
+            self.conn.close()
