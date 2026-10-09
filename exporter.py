@@ -18,9 +18,11 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from postcode import postal_for
+
 HEADERS = ["省份", "序号", "行政区划代码", "机构编号", "机构全称", "机构层级",
-           "通讯地址", "联系电话", "更新状态", "更新日期"]
-WIDTHS = [10, 6, 12, 12, 44, 10, 54, 26, 10, 12]
+           "通讯地址", "邮政编码", "联系电话", "更新状态", "更新日期"]
+WIDTHS = [10, 6, 12, 12, 44, 10, 54, 10, 26, 10, 12]
 
 SUM_HEADERS = ["省份", "机构数量", "本次新增", "信息变更", "最近更新日期"]
 SUM_WIDTHS = [14, 12, 12, 12, 16]
@@ -97,14 +99,14 @@ def _write_main_sheet(wb: Workbook, rows: list[dict]) -> None:
         elif r["status"] == "upd":
             band = UPD_BG
         vals = [r["province"], i + 1, r["admin_code"], r["org_code"], r["name"],
-                r["level"], r["addr"], r["tel"],
+                r["level"], r["addr"], postal_for(r["admin_code"]), r["tel"],
                 st_label.get(r["status"], "—"), r["updated_at"] or "—"]
         for c, v in enumerate(vals, 1):
             cell = _fill_cell(ws, row, c, v, band,
-                              CENTER if c in (1, 2, 6, 9, 10) else LEFT)
+                              CENTER if c in (1, 2, 6, 8, 10, 11) else LEFT)
             if c in (3, 4):
                 cell.number_format = "@"  # 代码列按文本，防止丢前导 0
-            if c == 10 and r["updated_at"]:
+            if c == 11 and r["updated_at"]:
                 cell.font = Font(size=11, color=UPD_TX)
 
     last_row = last + len(rows)
