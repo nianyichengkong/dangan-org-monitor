@@ -18,11 +18,12 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from divisions import division_for
 from postcode import postal_for
 
-HEADERS = ["省份", "序号", "行政区划代码", "机构编号", "机构全称", "机构层级",
-           "通讯地址", "邮政编码", "联系电话", "更新状态", "更新日期"]
-WIDTHS = [10, 6, 12, 12, 44, 10, 54, 10, 26, 10, 12]
+HEADERS = ["省份", "市", "县（区）", "序号", "行政区划代码", "机构编号", "机构全称",
+           "机构层级", "通讯地址", "邮政编码", "联系电话", "更新状态", "更新日期"]
+WIDTHS = [10, 11, 13, 6, 12, 12, 44, 10, 54, 10, 26, 10, 12]
 
 SUM_HEADERS = ["省份", "机构数量", "本次新增", "信息变更", "最近更新日期"]
 SUM_WIDTHS = [14, 12, 12, 12, 16]
@@ -98,15 +99,17 @@ def _write_main_sheet(wb: Workbook, rows: list[dict]) -> None:
             band = NEW_BG      # 新增行语义底色优先于条纹
         elif r["status"] == "upd":
             band = UPD_BG
-        vals = [r["province"], i + 1, r["admin_code"], r["org_code"], r["name"],
-                r["level"], r["addr"], postal_for(r["admin_code"]), r["tel"],
+        city, county = division_for(r["admin_code"])
+        vals = [r["province"], city, county or "本级", i + 1, r["admin_code"],
+                r["org_code"], r["name"], r["level"], r["addr"],
+                postal_for(r["admin_code"]), r["tel"],
                 st_label.get(r["status"], "—"), r["updated_at"] or "—"]
         for c, v in enumerate(vals, 1):
             cell = _fill_cell(ws, row, c, v, band,
-                              CENTER if c in (1, 2, 6, 8, 10, 11) else LEFT)
-            if c in (3, 4):
+                              CENTER if c in (1, 4, 8, 10, 12, 13) else LEFT)
+            if c in (5, 6):
                 cell.number_format = "@"  # 代码列按文本，防止丢前导 0
-            if c == 11 and r["updated_at"]:
+            if c == 13 and r["updated_at"]:
                 cell.font = Font(size=11, color=UPD_TX)
 
     last_row = last + len(rows)

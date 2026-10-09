@@ -21,11 +21,12 @@ from PySide6.QtWidgets import (
 )
 
 from database import Database
+from divisions import division_for
 from exporter import export
 from postcode import postal_for
 from scraper import fetch_all
 
-COLS = ["序号", "行政区划代码", "机构编号", "所属省份", "机构全称", "机构层级",
+COLS = ["序号", "省", "市", "县（区）", "机构层级", "机构全称",
         "通讯地址", "邮政编码", "联系电话", "更新状态", "更新日期"]
 COL_STATUS = 9
 
@@ -401,13 +402,13 @@ class MainWindow(QMainWindow):
         header = self.table.horizontalHeader()
         header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         header.setFixedHeight(44)
-        # 显式列宽：大表下 ResizeToContents 全列测量代价高且不稳，改用固定 + 双拉伸列
-        # 序号 68px：需容纳 4 位数（3551+），窄了会被省略成 "..."
-        for col, width in ((0, 68), (1, 104), (2, 100), (3, 76), (5, 96),
-                           (7, 160), (8, 78), (COL_STATUS, 92), (10, 100)):
+        # 显式列宽：把空间让给机构全称/通讯地址/联系电话三个高价值列
+        # 长文本列（全称/地址/电话）超宽时省略号 + 悬浮显示全文
+        for col, width in ((0, 56), (1, 64), (2, 88), (3, 106), (4, 96),
+                           (7, 84), (8, 126), (COL_STATUS, 92), (10, 100)):
             header.setSectionResizeMode(col, QHeaderView.Fixed)
             self.table.setColumnWidth(col, width)
-        header.setSectionResizeMode(4, QHeaderView.Stretch)   # 机构全称
+        header.setSectionResizeMode(5, QHeaderView.Stretch)   # 机构全称
         header.setSectionResizeMode(6, QHeaderView.Stretch)   # 通讯地址
         self.table.setColumnWidth(COL_STATUS, 92)
         header.setStretchLastSection(False)
@@ -459,8 +460,10 @@ class MainWindow(QMainWindow):
         if st != "all":
             rows = [r for r in rows if r["status"] == st]
         if kw:
+            # 搜索覆盖：名称/地址/电话/编号 + 推导出的市县名（如搜"郑州"）
             rows = [r for r in rows if kw in
-                    (r["name"] + r["addr"] + r["tel"] + r["org_code"]).lower()]
+                    (r["name"] + r["addr"] + r["tel"] + r["org_code"]
+                     + "".join(division_for(r["admin_code"]))).lower()]
         return rows
 
     def refresh_table(self) -> None:
@@ -469,14 +472,15 @@ class MainWindow(QMainWindow):
         table.setRowCount(len(rows))
 
         for i, r in enumerate(rows):
-            vals = [str(i + 1), r["admin_code"], r["org_code"], r["province"], r["name"],
-                    r["level"], r["addr"], postal_for(r["admin_code"]), r["tel"],
+            city, county = division_for(r["admin_code"])
+            vals = [str(i + 1), r["province"], city, county, r["level"], r["name"],
+                    r["addr"], postal_for(r["admin_code"]), r["tel"],
                     ST_TAG.get(r["status"], "—"), r["updated_at"] or "—"]
             for c, text in enumerate(vals):
                 item = QTableWidgetItem(text)
-                if c in (0, 1, 2, 3, 6, 8):
+                if c in (0, 1, 2, 3, 7, 8):
                     item.setForeground(QColor(T.TEXT_2))
-                if c == 4:
+                if c == 5:
                     f = item.font()
                     f.setWeight(QFont.DemiBold)
                     item.setFont(f)
@@ -486,6 +490,9 @@ class MainWindow(QMainWindow):
                     )
                 if c in (0, 8, 9, 10):
                     item.setTextAlignment(Qt.AlignCenter)
+                # 容易被截断的列给悬浮全文
+                if c in (5, 6, 8):
+                    item.setToolTip(text)
                 item.setData(Qt.UserRole, i)
                 table.setItem(i, c, item)
 
