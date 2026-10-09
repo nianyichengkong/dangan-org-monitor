@@ -403,9 +403,10 @@ class MainWindow(QMainWindow):
         header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         header.setFixedHeight(44)
         # 显式列宽：把空间让给机构全称/通讯地址/联系电话三个高价值列
+        # 序号 72px 容纳 4 位数；电话 200px 容纳「主号/副号」双号码，更长则省略+悬浮
         # 长文本列（全称/地址/电话）超宽时省略号 + 悬浮显示全文
-        for col, width in ((0, 56), (1, 64), (2, 88), (3, 106), (4, 96),
-                           (7, 84), (8, 126), (COL_STATUS, 92), (10, 100)):
+        for col, width in ((0, 72), (1, 64), (2, 88), (3, 106), (4, 96),
+                           (7, 84), (8, 200), (COL_STATUS, 92), (10, 100)):
             header.setSectionResizeMode(col, QHeaderView.Fixed)
             self.table.setColumnWidth(col, width)
         header.setSectionResizeMode(5, QHeaderView.Stretch)   # 机构全称
