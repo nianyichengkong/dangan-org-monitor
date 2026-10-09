@@ -22,11 +22,12 @@ from PySide6.QtWidgets import (
 
 from database import Database
 from exporter import export
+from postcode import postal_for
 from scraper import fetch_all
 
 COLS = ["序号", "行政区划代码", "机构编号", "所属省份", "机构全称", "机构层级",
-        "通讯地址", "联系电话", "更新状态", "更新日期"]
-COL_STATUS = 8
+        "通讯地址", "邮政编码", "联系电话", "更新状态", "更新日期"]
+COL_STATUS = 9
 
 
 # ================================================================ 设计令牌
@@ -403,7 +404,7 @@ class MainWindow(QMainWindow):
         # 显式列宽：大表下 ResizeToContents 全列测量代价高且不稳，改用固定 + 双拉伸列
         # 序号 68px：需容纳 4 位数（3551+），窄了会被省略成 "..."
         for col, width in ((0, 68), (1, 104), (2, 100), (3, 76), (5, 96),
-                           (7, 168), (COL_STATUS, 92), (9, 100)):
+                           (7, 160), (8, 78), (COL_STATUS, 92), (10, 100)):
             header.setSectionResizeMode(col, QHeaderView.Fixed)
             self.table.setColumnWidth(col, width)
         header.setSectionResizeMode(4, QHeaderView.Stretch)   # 机构全称
@@ -469,21 +470,21 @@ class MainWindow(QMainWindow):
 
         for i, r in enumerate(rows):
             vals = [str(i + 1), r["admin_code"], r["org_code"], r["province"], r["name"],
-                    r["level"], r["addr"], r["tel"],
+                    r["level"], r["addr"], postal_for(r["admin_code"]), r["tel"],
                     ST_TAG.get(r["status"], "—"), r["updated_at"] or "—"]
             for c, text in enumerate(vals):
                 item = QTableWidgetItem(text)
-                if c in (0, 1, 2, 3, 6):
+                if c in (0, 1, 2, 3, 6, 8):
                     item.setForeground(QColor(T.TEXT_2))
                 if c == 4:
                     f = item.font()
                     f.setWeight(QFont.DemiBold)
                     item.setFont(f)
-                if c == 9:
+                if c == 10:
                     item.setForeground(
                         QColor(T.UPD_TX if r["updated_at"] else T.TEXT_DISABLED)
                     )
-                if c in (0, 8, 9):
+                if c in (0, 8, 9, 10):
                     item.setTextAlignment(Qt.AlignCenter)
                 item.setData(Qt.UserRole, i)
                 table.setItem(i, c, item)
